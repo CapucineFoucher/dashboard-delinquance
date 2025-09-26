@@ -3,6 +3,9 @@ import plotly.express as px
 import streamlit as st
 import requests
 from io import BytesIO
+import pandas as pd
+import plotly.express as px
+import streamlit as st
 
 st.set_page_config(
     page_title="Dashboard Criminalité France",
@@ -10,11 +13,11 @@ st.set_page_config(
     layout="wide"
 )
 
-# Petit message pour confirmer que l’app se lance
+st.title("🚨 Tableau de Bord de la Criminalité en France")
 st.write("✅ App démarrée (début de script)")
 
 # ----
-# 1. FONCTIONS DE CHARGEMENT
+# CHARGEMENT DES DONNÉES
 # ----
 @st.cache_data
 def load_crime_data():
@@ -56,10 +59,9 @@ def load_population_local():
         df_pop = pd.read_excel(
             "POPULATION_MUNICIPALE_COMMUNES_FRANCE.xlsx",
             usecols=use_cols,
-            dtype=str,
-            nrows=5000   # ⚠️ limite pour test mémoire
+            dtype=str
         )
-        st.write(f"✅ Population chargée (test) : {df_pop.shape}")
+        st.write(f"✅ Population chargée : {df_pop.shape}")
 
         df_long = df_pop.melt(
             id_vars=["codgeo", "libgeo"],
@@ -79,7 +81,6 @@ def load_population_local():
 
 def prepare_data():
     st.write("➡️ Début prepare_data()")
-
     df, source_url = load_crime_data()
     if df is None:
         st.stop()
@@ -103,15 +104,69 @@ def prepare_data():
     return df, source_url
 
 # ----
-# 2. CHARGEMENT DES DONNÉES
+# CHARGE TOUTES LES DONNÉES
 # ----
 df, source_url = prepare_data()
-
 if df is None or df.empty:
     st.error("❌ Impossible de charger les données.")
     st.stop()
+st.success("🎉 Données prêtes!")
 
-st.success("🎉 Données prêtes ! L’app fonctionne, ajoute maintenant tes visualisations...")
+# ----
+# SIDEBAR
+# ----
+annees = sorted(df["annee"].dropna().unique())
+annee_selection = st.sidebar.selectbox("📅 Choisir une année :", annees, index=len(annees)-1)
+type_infraction = st.sidebar.selectbox("🔎 Choisir un type d'infraction :", sorted(df["infraction"].dropna().unique()))
 
-# Pour le moment on arrête ici pour tester le déploiement
-st.write(df.head())
+df_filtered = df[(df["annee"] == annee_selection) & (df["infraction"] == type_infraction)]
+
+# ----
+# VIZ: CARTE
+# ----
+st.write("➡️ Préparation carte choroplèthe...")
+try:
+    fig_choro = px.choropleth(
+        df_filtered,
+        geojson="https://france-geojson.gregoiredavid.fr/repo/departements.geojson",
+        locations="DEP",
+        featureidkey="properties.code",
+        color="taux_pour_mille",
+        color_continuous_scale="OrRd",
+        range_color=(0, df_filtered["taux_pour_mille"].max()),
+        title=f"Taux de {type_infraction} pour 1000 hab. en {annee_selection}"
+    )
+    fig_choro.update_geos(fitbounds="locations", visible=False)
+    st.plotly_chart(fig_choro, use_container_width=True)
+except Exception as e:
+    st.error(f"❌ Erreur carte : {e}")
+
+# ----
+# VIZ: TOP 20 COMMUNES
+# ----
+st.write("➡️ Préparation histogramme top 20 communes...")
+try:
+    top_communes = df_filtered.groupby("Commune")["taux_pour_mille"].mean().nlargest(20).reset_index()
+    fig_top = px.bar(
+        top_communes,
+        x="Commune", y="taux_pour_mille",
+        title=f"Top 20 des communes avec le plus haut taux de {type_infraction} ({annee_selection})"
+    )
+    st.plotly_chart(fig_top, use_container_width=True)
+except Exception as e:
+    st.error(f"❌ Erreur top communes : {e}")
+
+# ----
+# VIZ: EVOLUTION DANS LE TEMPS
+# ----
+st.write("➡️ Préparation évolution dans le temps...")
+try:
+    df_evo = df[df["infraction"] == type_infraction].groupby(["annee"])["taux_pour_mille"].mean().reset_index()
+    fig_evo = px.line(
+        df_evo,
+        x="annee", y="taux_pour_mille",
+        title=f"Évolution du taux de {type_infraction} en France"
+    )
+    st.plotly_chart(fig_evo, use_container_width=True)
+except Exception as e:
+    st.error(f"❌ Erreur évolution : {e}")
