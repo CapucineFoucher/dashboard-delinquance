@@ -43,13 +43,26 @@ def load_communes_ref():
 
 @st.cache_data
 def load_population_local():
-    # Charger le fichier Excel INSEE pop
-    df_pop = pd.read_excel("POPULATION_MUNICIPALE_COMMUNES_FRANCE.xlsx", nrows=1000)
+    # ⚡ Charger seulement certaines colonnes (codgeo, libgeo, et celles commençant par "p")
+    cols_to_use = ["codgeo", "libgeo"]  # colonnes fixes
+    # Ici on lit une première fois juste l’en-tête pour identifier les colonnes
+    header_cols = pd.read_excel(
+        "POPULATION_MUNICIPALE_COMMUNES_FRANCE.xlsx", 
+        nrows=0
+    ).columns.tolist()
     
-    # Garder uniquement les colonnes utiles (p13_pop … p21_pop)
-    pop_cols = [c for c in df_pop.columns if c.startswith("p")]
+    # Ajouter seulement les colonnes population "pXX_pop"
+    pop_cols = [c for c in header_cols if c.startswith("p")]
+    use_cols = cols_to_use + pop_cols
     
-    # Reshape en format long (commune × année)
+    # Charger uniquement ces colonnes
+    df_pop = pd.read_excel(
+        "POPULATION_MUNICIPALE_COMMUNES_FRANCE.xlsx", 
+        usecols=use_cols,
+        dtype=str
+    )
+    
+    # Reshape en format long
     df_long = df_pop.melt(
         id_vars=["codgeo", "libgeo"],
         value_vars=pop_cols,
@@ -57,17 +70,16 @@ def load_population_local():
         value_name="Population"
     )
     
-    # Nettoyage : année "p13_pop" -> 2013, etc.
+    # Nettoyage : année "p13_pop" ➝ 2013
     df_long["annee"] = df_long["annee"].str.extract(r"p(\d+)_pop").astype(int)
-    df_long["annee"] = 2000 + df_long["annee"]   # ex: 13 -> 2013
+    df_long["annee"] = 2000 + df_long["annee"]
     
-    # Harmonisation
     df_long["codgeo"] = df_long["codgeo"].str.zfill(5)
     df_long["Population"] = pd.to_numeric(df_long["Population"], errors="coerce")
     
-    # ⚡ Extension population au-delà de 2021 (copie des valeurs 2021)
-    max_year = df_long["annee"].max()   # = 2021
-    for year in range(max_year+1, 2025):  # 2022 → 2024
+    # ⚡ Extension population au-delà de 2021 (copie valeurs 2021)
+    max_year = df_long["annee"].max()
+    for year in range(max_year+1, 2025):  
         extrap = df_long[df_long["annee"] == max_year].copy()
         extrap["annee"] = year
         df_long = pd.concat([df_long, extrap])
