@@ -44,7 +44,7 @@ def load_communes_ref():
 @st.cache_data
 def load_population_local():
     # Charger le fichier Excel INSEE pop
-    df_pop = pd.read_excel("POPULATION_MUNICIPALE_COMMUNES_FRANCE.xlsx", dtype=str)
+    df_pop = pd.read_excel("POPULATION_MUNICIPALE_COMMUNES_FRANCE.xlsx", nrows=1000)
     
     # Garder uniquement les colonnes utiles (p13_pop … p21_pop)
     pop_cols = [c for c in df_pop.columns if c.startswith("p")]
