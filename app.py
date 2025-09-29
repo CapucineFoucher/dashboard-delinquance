@@ -40,22 +40,28 @@ def load_communes_ref():
 @st.cache_data
 def load_population_local():
     url_pop = "https://www.data.gouv.fr/api/1/datasets/r/630e7917-02db-4838-8856-09235719551c"
-    df_pop = pd.read_csv(url_pop, sep=";", encoding="latin-1", dtype=str)
+    df_pop = pd.read_csv(
+        url_pop,
+        sep=";",              # essaie aussi sep="," si besoin
+        encoding="utf-8-sig", # gère les accents + BOM
+        dtype=str,
+        on_bad_lines="skip"   # évite crash si ligne corrompue
+    )
 
+    # Maintenant tu appliques la même logique : melt, parse des années, etc.
     pop_cols = [c for c in df_pop.columns if c.startswith("p")]
-
     df_long = df_pop.melt(
         id_vars=["codgeo", "libgeo"],
         value_vars=pop_cols,
         var_name="annee",
         value_name="Population"
     )
-
     df_long["annee"] = df_long["annee"].str.extract(r"p(\d+)_pop").astype(int)
     df_long["annee"] = 2000 + df_long["annee"]
     df_long["codgeo"] = df_long["codgeo"].str.zfill(5)
     df_long["Population"] = pd.to_numeric(df_long["Population"], errors="coerce")
 
+    # extrapolation éventuelle
     max_year = df_long["annee"].max()
     for year in range(max_year + 1, 2025):
         extrap = df_long[df_long["annee"] == max_year].copy()
