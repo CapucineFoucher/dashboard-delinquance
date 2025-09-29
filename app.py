@@ -16,58 +16,63 @@ st.set_page_config(
 # ----
 @st.cache_data
 def load_crime_data():
-    """Charge les données de criminalité depuis l'API data.gouv.fr (version latest)"""
     url_latest = "https://static.data.gouv.fr/resources/bases-statistiques-communale-departementale-et-regionale-de-la-delinquance-enregistree-par-la-police-et-la-gendarmerie-nationales/20250710-144817/donnee-data.gouv-2024-geographie2025-produit-le2025-06-04.csv.gz"
-
-    df = pd.read_csv(url_latest, sep=";", dtype=str, compression="gzip")
     df["annee"] = pd.to_numeric(df["annee"], errors="coerce")
     df["nombre"] = pd.to_numeric(df["nombre"], errors="coerce")
-
     df["taux_pour_mille"] = (
-        df["taux_pour_mille"]
-        .str.replace(",", ".", regex=False)
-        .astype(float)
+        df["taux_pour_mille"].str.replace(",", ".", regex=False).astype(float)
     )
     return df, url_latest
 
-
 @st.cache_data
 def load_communes_ref():
-    """Charge la table de référence INSEE des communes"""
-    communes_ref = pd.read_csv("v_commune_2025.csv", dtype=str)
-    return communes_ref[["COM", "LIBELLE"]].rename(columns={"COM": "CODGEO_2025", "LIBELLE": "Commune"})
-
+    df_ref = pd.read_csv("v_commune_2025.csv", dtype=str)
+    return df_ref[["COM", "LIBELLE"]].rename(columns={"COM": "CODGEO_2025", "LIBELLE": "Commune"})
 
 @st.cache_data
-def load_population_local():
-    # Lire directement le CSV optimisé (déjà préparé !)
-    df_long = pd.read_csv("population_long.csv", dtype={"codgeo": str, "annee": int})
-    df_long["codgeo"] = df_long["codgeo"].str.zfill(5)
-    return df_long.rename(columns={"codgeo": "CODGEO"})
+def load_population_data():
+    df_pop = pd.read_csv("population_long.csv", dtype={"codgeo": str, "annee": int})
+    df_pop["codgeo"] = df_pop["codgeo"].str.zfill(5)
+    return df_pop.rename(columns={"codgeo": "CODGEO"})
 
 
-def prepare_data(annee_choice=None, subset_communes=None):
+def prepare_data(annee_choice=None, communes_choice=None, dep_choice=None):
     df_crime, source_url = load_crime_data()
-    communes_ref = load_communes_ref()
-    df_crime = df_crime.merge(communes_ref, on="CODGEO_2025", how="left")
+    df_ref = load_communes_ref()
+    df_pop = load_population_data()
 
-    if annee_choice:
+    # Merge avec libellés communes
+    df_crime = df_crime.merge(df_ref, on="CODGEO_2025", how="left")
+
+    # Filtrer au plus tôt
+    if annee_choice is not None:
         df_crime = df_crime[df_crime["annee"] == annee_choice]
-    if subset_communes:
-        df_crime = df_crime[df_crime["Commune"].isin(subset_communes)]
 
-    # merge population seulement sur ce sous-ensemble
-    pop_long = load_population_local()
-    df_crime = df_crime.merge(pop_long, left_on=["CODGEO_2025", "annee"],
-                              right_on=["CODGEO", "annee"], how="left")
+    if communes_choice:
+        df_crime = df_crime[df_crime["Commune"].isin(communes_choice)]
 
-    df_crime["taux_calcule_pour_mille"] = (df_crime["nombre"] / df_crime["Population"]) * 1000
-    return df_crime, source_url
+    if dep_choice:
+        df_crime = df_crime[df_crime["CODGEO_2025"].str.startswith(dep_choice)]
+
+    # Seulement maintenant merge avec population
+    df = df_crime.merge(
+        df_pop,
+        left_on=["CODGEO_2025", "annee"],
+        right_on=["CODGEO", "annee"],
+        how="left"
+    )
+
+    df["taux_calcule_pour_mille"] = (df["nombre"] / df["Population"]) * 1000
+    return df, source_url
 
 # ----
 # 2. DONNÉES
 # ----
-df, source_url = prepare_data()
+df, source_url = prepare_data(
+    annee_choice=annee_choice,
+    communes_choice=[commune_choice] if niveau == "Commune spécifique" else None,
+    dep_choice=dep
+)
 
 if df is None:
     st.error("Impossible de charger les données. Vérifiez votre connexion internet.")
