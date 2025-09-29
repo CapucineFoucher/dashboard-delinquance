@@ -27,21 +27,29 @@ def derive_dep(code: str) -> str:
 @st.cache_data(show_spinner=False)
 def load_crime_data():
     import os
-    # Essayer d’abord le “latest” (mis à jour par GitHub Actions)
-    candidate_files = ["crime_2016_latest.csv.gz", "crime_2016_2024.csv.gz"]
+
+    # Liste des fichiers possibles (ordre de priorité)
+    candidate_files = [
+        "crime_2016_latest.csv.gz",  # mis à jour automatiquement par GitHub Action
+        "crime_2016_2024.csv.gz"     # ancien fichier statique
+    ]
+
     file_to_use = None
     for f in candidate_files:
         if os.path.exists(f):
             file_to_use = f
             break
+
     if file_to_use is None:
         raise FileNotFoundError(f"Aucun fichier crime trouvé parmi: {candidate_files}")
 
     df = pd.read_csv(file_to_use, sep=";", compression="gzip", dtype={"CODGEO_2025": str})
     df["annee"]  = pd.to_numeric(df["annee"], errors="coerce")
     df["nombre"] = pd.to_numeric(df["nombre"], errors="coerce")
+
     if "taux_pour_mille" not in df.columns:
         df["taux_pour_mille"] = pd.NA
+
     return df, file_to_use
 
 @st.cache_data(show_spinner=False)
