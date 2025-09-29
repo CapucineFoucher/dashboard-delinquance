@@ -1,20 +1,12 @@
 import io
 import sys
 import time
-import json
-import hashlib
 import requests
 import pandas as pd
 
+# URL stable Data.gouv
 STABLE_URL = "https://www.data.gouv.fr/api/1/datasets/r/6252a84c-6b9e-4415-a743-fc6a631877bb"
 OUTPUT_LATEST = "crime_2016_latest.csv.gz"
-
-REQUIRED_COLS_VARIANTS = {
-    "CODGEO": ["CODGEO", "codgeo"],
-    "ANNEE": ["ANNEE", "annee"],
-    "INDICATEUR": ["INDICATEUR", "indicateur"],
-    "NB": ["NB", "nb", "nombre"]
-}
 
 def http_get_with_retry(url, max_retries=4, timeout=60):
     last_err = None
@@ -25,73 +17,57 @@ def http_get_with_retry(url, max_retries=4, timeout=60):
             return resp
         except Exception as e:
             last_err = e
-            time.sleep(2 * (i + 1))
+            time.sleep(2*(i+1))
     raise last_err
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    # Map columns robustly
-    cols_lower = {c.lower(): c for c in df.columns}
-    def find_col(candidates):
-        for cand in candidates:
-            if cand in df.columns:
-                return cand
-            if cand.lower() in cols_lower:
-                return cols_lower[cand.lower()]
+    cols_map = {c.lower(): c for c in df.columns}
+    def col(*names):
+        for n in names:
+            if n in df.columns: return n
+            if n.lower() in cols_map: return cols_map[n.lower()]
         return None
 
-    col_cod = find_col(REQUIRED_COLS_VARIANTS["CODGEO"])
-    col_year = find_col(REQUIRED_COLS_VARIANTS["ANNEE"])
-    col_ind = find_col(REQUIRED_COLS_VARIANTS["INDICATEUR"])
-    col_nb  = find_col(REQUIRED_COLS_VARIANTS["NB"])
+    c_cod = col("CODGEO","codgeo")
+    c_an  = col("ANNEE","annee")
+    c_ind = col("INDICATEUR","indicateur")
+    c_nb  = col("NB","nb","nombre")
 
-    missing = [name for name, col in {
-        "CODGEO/CODGEO_2025": col_cod,
-        "ANNEE": col_year,
-        "INDICATEUR": col_ind,
-        "NB/nombre": col_nb
-    }.items() if col is None]
-    if missing:
-        raise ValueError(f"Colonnes manquantes ou non détectées: {missing}. Colonnes présentes: {list(df.columns)}")
+    if not all([c_cod,c_an,c_ind,c_nb]):
+        raise ValueError(f"Colonnes non trouvées. Colonnes dispo: {list(df.columns)}")
 
     df = df.rename(columns={
-        col_cod: "CODGEO_2025",
-        col_year: "annee",
-        col_ind: "indicateur",
-        col_nb: "nombre"
+        c_cod:"CODGEO_2025",
+        c_an:"annee",
+        c_ind:"indicateur",
+        c_nb:"nombre"
     })
-    return df[["CODGEO_2025", "annee", "indicateur", "nombre"]]
+    return df[["CODGEO_2025","annee","indicateur","nombre"]]
 
 def main():
-    print(f"Téléchargement depuis l’URL stable…\n{STABLE_URL}")
+    print(f"Téléchargement depuis l’URL stable:\n{STABLE_URL}")
     resp = http_get_with_retry(STABLE_URL)
     content = resp.content
 
-    # Essayer lecture CSV (compression auto “infer”)
-    try:
-        df = pd.read_csv(io.BytesIO(content), sep=";", dtype=str, compression="infer")
-    except Exception:
-        # Certains dumps sont en CSV “,” → réessayer virgule
-        df = pd.read_csv(io.BytesIO(content), sep=",", dtype=str, compression="infer")
+    # 🚨 Ici on précise bien que c’est GZIP 🚨
+    df = pd.read_csv(io.BytesIO(content), compression="gzip", sep=";", dtype=str, low_memory=False)
 
-    print(f"Colonnes reçues: {list(df.columns)}")
+    print(f"Colonnes importées: {list(df.columns)}")
     df = normalize_columns(df)
 
-    # Types
     df["annee"] = pd.to_numeric(df["annee"], errors="coerce")
     df["nombre"] = pd.to_numeric(df["nombre"], errors="coerce")
-    # Nettoyage basique
     df["CODGEO_2025"] = df["CODGEO_2025"].astype(str).str.strip()
-    df = df.dropna(subset=["annee", "nombre"])
 
-    an_min, an_max = int(df["annee"].min()), int(df["annee"].max())
-    print(f"Plage d’années détectée: {an_min} → {an_max}")
-    print(f"Lignes: {len(df):,}")
+    df = df.dropna(subset=["annee","nombre"])
+    print(f"Années couvertes: {df['annee'].min()} → {df['annee'].max()}")
+    print(f"Lignes totales: {len(df):,}")
 
-    # Ecriture “latest” (l’app lira ce fichier automatiquement)
+    # On écrase le fichier latest
     df.to_csv(OUTPUT_LATEST, sep=";", index=False, compression="gzip")
     print(f"✅ Écrit: {OUTPUT_LATEST}")
 
-if __name__ == "__main__":
+if __name__=="__main__":
     try:
         main()
     except Exception as e:
