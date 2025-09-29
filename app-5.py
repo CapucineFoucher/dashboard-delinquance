@@ -23,7 +23,7 @@ def derive_dep(code: str) -> str:
 # ----------------------------------
 # 1) Data loaders (cloud-friendly)
 # ----------------------------------
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def load_crime_data():
     # Reads your locally committed, prefiltered file (2016-2024)
     df = pd.read_csv("crime_2016_2024.csv.gz", sep=";", compression="gzip", dtype={"CODGEO_2025": str})
@@ -36,14 +36,14 @@ def load_crime_data():
         df["taux_pour_mille"] = pd.NA
     return df, "crime_2016_2024.csv.gz"
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def load_communes_ref():
     ref = pd.read_csv("v_commune_2025.csv", dtype=str)
     ref = ref.rename(columns={"COM": "CODGEO_2025", "LIBELLE": "Commune"})
     # Keep only the essential columns
     return ref[["CODGEO_2025", "Commune"]]
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def load_population_data():
     # population_long.csv with columns: codgeo, annee, Population
     pop = pd.read_csv("population_long.csv", dtype={"codgeo": str, "annee": int})
