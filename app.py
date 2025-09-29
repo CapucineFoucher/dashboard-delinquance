@@ -40,6 +40,7 @@ def load_communes_ref():
 
 @st.cache_data
 def load_population_local():
+    # Lire directement le CSV optimisé (déjà préparé !)
     df_long = pd.read_csv("population_long.csv", dtype={"codgeo": str, "annee": int})
     df_long["codgeo"] = df_long["codgeo"].str.zfill(5)
     return df_long.rename(columns={"codgeo": "CODGEO"})
