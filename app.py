@@ -37,19 +37,25 @@ def load_communes_ref():
     return communes_ref[["COM", "LIBELLE"]].rename(columns={"COM": "CODGEO_2025", "LIBELLE": "Commune"})
 
 
+
 @st.cache_data
 def load_population_local():
     url_pop = "https://www.data.gouv.fr/api/1/datasets/r/630e7917-02db-4838-8856-09235719551c"
-    df_pop = pd.read_csv(
-        url_pop,
-        sep=";",              # essaie aussi sep="," si besoin
-        encoding="utf-8-sig", # gère les accents + BOM
-        dtype=str,
-        on_bad_lines="skip"   # évite crash si ligne corrompue
-    )
-
-    # Maintenant tu appliques la même logique : melt, parse des années, etc.
+    
+    # Télécharger le fichier binaire
+    r = requests.get(url_pop)
+    r.raise_for_status()
+    
+    # Essayer comme Excel si c'est un xls(x)
+    try:
+        df_pop = pd.read_excel(BytesIO(r.content), dtype=str)
+    except Exception:
+        # sinon tenter comme CSV avec détection du séparateur
+        df_pop = pd.read_csv(BytesIO(r.content), sep=None, engine="python", dtype=str)
+    
+    # Colonnes population
     pop_cols = [c for c in df_pop.columns if c.startswith("p")]
+    
     df_long = df_pop.melt(
         id_vars=["codgeo", "libgeo"],
         value_vars=pop_cols,
