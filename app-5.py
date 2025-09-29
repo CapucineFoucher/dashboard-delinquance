@@ -4,7 +4,7 @@ import plotly.express as px
 import streamlit as st
 
 # ----------------------------------
-# Config
+# Page config
 # ----------------------------------
 st.set_page_config(
     page_title="Dashboard Criminalité France",
@@ -22,7 +22,7 @@ def derive_dep(code: str) -> str:
     return code[:2]
 
 # ----------------------------------
-# Loaders
+# 1) Data loaders
 # ----------------------------------
 @st.cache_data(show_spinner=False)
 def load_crime_data():
@@ -64,10 +64,10 @@ def prepare_data(annee_choice=None, communes_choice=None, dep_choice=None, inclu
     df = crime.merge(pop, left_on=["CODGEO_2025", "annee"], right_on=["CODGEO", "annee"], how="left")
     df["taux_calcule_pour_mille"] = (df["nombre"] / df["Population"]) * 1000
     df.loc[df["Population"].isna() | (df["Population"] <= 0), "taux_calcule_pour_mille"] = pd.NA
-    return df
+    return df, "crime_2016_2024.csv.gz"
 
 # ----------------------------------
-# UI - Sidebar
+# 2) UI - Sidebar
 # ----------------------------------
 st.title("🚨 Dashboard Criminalité France")
 
@@ -89,11 +89,40 @@ deps = pd.Series(crime_raw["CODGEO_2025"].dropna().unique()).map(derive_dep).dro
 dep_choice = st.sidebar.selectbox("Département", ["Tous"] + sorted(deps.tolist()))
 dep_choice = None if dep_choice == "Tous" else dep_choice
 
-df = prepare_data(annee_choice, None if commune_choice=="France" else [commune_choice], dep_choice, False)
+df, _ = prepare_data(annee_choice, None if commune_choice=="France" else [commune_choice], dep_choice, False)
 
 if df.empty:
     st.warning("Aucune donnée disponible pour ces filtres.")
     st.stop()
+
+# ----------------------------------
+# Export Excel helper
+# ----------------------------------
+def create_excel_rankings(df_single_year: pd.DataFrame, year: int) -> bytes:
+    base = df_single_year.copy()
+    agg = (
+        base.groupby(["Commune", "CODGEO_2025"], as_index=False)
+        .agg(Total_crimes=("nombre", "sum"), Population=("Population", "first"))
+    )
+    agg["Taux_pour_mille"] = (agg["Total_crimes"] / agg["Population"]) * 1000
+    agg.loc[agg["Population"].isna() | (agg["Population"] <= 0), "Taux_pour_mille"] = pd.NA
+
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        agg.sort_values("Total_crimes", ascending=False).to_excel(writer, index=False, sheet_name="Classement_nombre")
+        agg.sort_values("Taux_pour_mille", ascending=False).to_excel(writer, index=False, sheet_name="Classement_taux_1000")
+    buffer.seek(0)
+    return buffer.getvalue()
+
+st.sidebar.header("📥 Export")
+if st.sidebar.button("Générer Excel classements"):
+    excel_data = create_excel_rankings(df, annee_choice)
+    st.sidebar.download_button(
+        label="📊 Télécharger Excel",
+        data=excel_data,
+        file_name=f"classements_{annee_choice}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
 # ----------------------------------
 # Tabs
@@ -103,95 +132,136 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📈 Évolutions", "🔥 Heatmap", "🔍 Recherche", "⚖️ Comparaison"
 ])
 
-# ---- Carte
+# ---- Tab 1 Carte
 with tab1:
     st.header("🗺️ Carte interactive par département")
-    df_map = df.groupby(["DEP","indicateur"], dropna=False)["nombre"].sum().reset_index()
+    df_map = df.groupby(["annee", "DEP", "indicateur"])["nombre"].sum().reset_index()
     if indic_choice == "Tous les crimes confondus":
-        df_map = df_map.groupby("DEP", as_index=False)["nombre"].sum()
-        title_map = "Tous crimes confondus " + str(annee_choice)
+        df_map_filtered = df_map.groupby(["annee", "DEP"], as_index=False)["nombre"].sum()
+        title_map = "Évolution: Tous les crimes confondus"
     else:
-        df_map = df_map[df_map["indicateur"]==indic_choice]
-        title_map = indic_choice+" "+str(annee_choice)
-    if not df_map.empty:
-        fig = px.choropleth(
-            df_map, geojson="https://france-geojson.gregoiredavid.fr/repo/departements.geojson",
-            locations="DEP", featureidkey="properties.code",
-            color="nombre", color_continuous_scale="Reds", title=title_map
+        df_map_filtered = df_map[df_map["indicateur"] == indic_choice]
+        title_map = f"Évolution: {indic_choice}"
+    if not df_map_filtered.empty:
+        fig_map = px.choropleth_mapbox(
+            df_map_filtered,
+            geojson="https://france-geojson.gregoiredavid.fr/repo/departements.geojson",
+            locations="DEP",
+            featureidkey="properties.code",
+            color="nombre",
+            color_continuous_scale="Reds",
+            mapbox_style="carto-positron",
+            center={"lat": 46.6, "lon": 2.5},
+            zoom=4.5,
+            opacity=0.7,
+            hover_name="DEP",
+            title=title_map
         )
-        fig.update_geos(fitbounds="locations", visible=False)
-        st.plotly_chart(fig, width="stretch")
-
-# ---- Répartition
-with tab2:
-    st.header("📊 Répartition")
-    if indic_choice=="Tous les crimes confondus":
-        subset = df.groupby("indicateur", as_index=False)["nombre"].sum().sort_values("nombre",ascending=False)
+        fig_map.update_layout(height=600)
+        st.plotly_chart(fig_map, use_container_width=True)
     else:
-        subset = df[df["indicateur"]==indic_choice]
-    subset_disp = subset.copy()
-    if len(subset_disp)>200:
-        st.info(f"Affichage limité à 200 lignes sur {len(subset_disp)}")
-        subset_disp = subset_disp.head(200)
-    st.dataframe(subset_disp, use_container_width=True)
+        st.warning("Aucune donnée disponible")
 
-# ---- Classements
+# ---- Tab 2 Répartition
+with tab2:
+    st.header("📊 Répartition des crimes")
+    if commune_choice == "France":
+        if indic_choice == "Tous les crimes confondus":
+            subset = df[df["annee"] == annee_choice].groupby("indicateur", as_index=False)["nombre"].sum()
+            title = f"Répartition des crimes en France en {annee_choice}"
+        else:
+            subset = df[(df["annee"] == annee_choice) & (df["indicateur"] == indic_choice)]
+            title = f"{indic_choice} en France en {annee_choice}"
+    else:
+        if indic_choice == "Tous les crimes confondus":
+            subset = df[(df["Commune"] == commune_choice) & (df["annee"] == annee_choice)].groupby("indicateur", as_index=False)["nombre"].sum()
+            title = f"Répartition des crimes à {commune_choice} en {annee_choice}"
+        else:
+            subset = df[(df["Commune"] == commune_choice) & (df["annee"] == annee_choice) & (df["indicateur"] == indic_choice)]
+            title = f"{indic_choice} à {commune_choice} en {annee_choice}"
+    if not subset.empty:
+        fig_pie = px.pie(subset, values="nombre", names="indicateur", title=title, hole=0.3)
+        fig_pie.update_layout(height=600)
+        st.plotly_chart(fig_pie, use_container_width=True)
+        st.dataframe(subset.sort_values("nombre", ascending=False))
+    else:
+        st.warning("Aucune donnée disponible")
+
+# ---- Tab 3 Classements
 with tab3:
-    st.header("🏆 Classements des communes")
-    n = st.slider("Nombre",10,100,15)
-    df_rank = df if indic_choice=="Tous les crimes confondus" else df[df["indicateur"]==indic_choice]
-    rank = df_rank.groupby(["Commune","CODGEO_2025"],as_index=False).agg(
-        Total_crimes=("nombre","sum"), Population=("Population","first"))
-    rank["Taux_pour_mille"]=(rank["Total_crimes"]/rank["Population"])*1000
-    top_nombre = rank.sort_values("Total_crimes",ascending=False).head(n)
-    top_taux = rank.sort_values("Taux_pour_mille",ascending=False).head(n)
-    st.dataframe(top_nombre,use_container_width=True)
+    st.header("🏆 Classement des communes")
+    n_communes = st.slider("Nombre", 10, 100, 15)
+    df_year = df[df["annee"] == annee_choice].copy()
+    if indic_choice != "Tous les crimes confondus":
+        df_year = df_year[df_year["indicateur"] == indic_choice]
+    top_nombre = df_year.groupby(["Commune", "CODGEO_2025"], as_index=False).agg(Total_crimes=("nombre", "sum"), Population=("Population", "first")).sort_values("Total_crimes", ascending=False).head(n_communes)
+    taux_rank = df_year.groupby(["Commune", "CODGEO_2025"], as_index=False).agg(Total_crimes=("nombre", "sum"), Population=("Population", "first"))
+    taux_rank["Taux_pour_mille"] = (taux_rank["Total_crimes"] / taux_rank["Population"]) * 1000
+    top_taux = taux_rank.sort_values("Taux_pour_mille", ascending=False).head(n_communes)
+    st.dataframe(top_nombre)
+    st.dataframe(top_taux)
 
-# ---- Evolutions (fixé)
+# ---- Tab 4 Evolutions (corrigé)
 with tab4:
     st.header("📈 Évolutions temporelles")
-    df_all = prepare_data(None,None if commune_choice=="France" else [commune_choice],dep_choice,True)
-    if indic_choice=="Tous les crimes confondus":
-        evo = df_all.groupby(["annee","indicateur"],as_index=False)["nombre"].sum()
-        fig = px.line(evo,x="annee",y="nombre",color="indicateur")
+    df_all, _ = prepare_data(
+        communes_choice=None if commune_choice=="France" else [commune_choice],
+        dep_choice=dep_choice,
+        include_all_years=True
+    )
+    if commune_choice == "France":
+        if indic_choice == "Tous les crimes confondus":
+            subset_evol = df_all.groupby(["annee","indicateur"])["nombre"].sum().reset_index()
+            title_evol = "Évolution des crimes en France"
+        else:
+            subset_evol = df_all[df_all["indicateur"]==indic_choice].groupby("annee")["nombre"].sum().reset_index()
+            subset_evol["indicateur"] = indic_choice
+            title_evol = f"Évolution: {indic_choice} en France"
     else:
-        evo = df_all[df_all["indicateur"]==indic_choice].groupby("annee",as_index=False)["nombre"].sum()
-        fig = px.line(evo,x="annee",y="nombre",markers=True,title=indic_choice)
-    st.plotly_chart(fig,width="stretch")
+        if indic_choice == "Tous les crimes confondus":
+            subset_evol = df_all[df_all["Commune"]==commune_choice].groupby(["annee","indicateur"])["nombre"].sum().reset_index()
+            title_evol = f"Évolution des crimes à {commune_choice}"
+        else:
+            subset_evol = df_all[(df_all["Commune"]==commune_choice)&(df_all["indicateur"]==indic_choice)].groupby("annee")["nombre"].sum().reset_index()
+            subset_evol["indicateur"] = indic_choice
+            title_evol = f"Évolution: {indic_choice} à {commune_choice}"
+    if not subset_evol.empty:
+        fig_line = px.line(subset_evol, x="annee", y="nombre", color="indicateur" if indic_choice=="Tous les crimes confondus" else None, title=title_evol, markers=True)
+        fig_line.update_layout(height=600)
+        st.plotly_chart(fig_line, use_container_width=True)
 
-# ---- Heatmap
+# ---- Tab 5 Heatmap
 with tab5:
     st.header("🔥 Heatmap")
-    df_h = prepare_data(None,None if commune_choice=="France" else [commune_choice],dep_choice,True)
-    pivot = df_h.groupby(["annee","indicateur"],as_index=False)["nombre"].sum().pivot(
-        index="indicateur",columns="annee",values="nombre").fillna(0)
-    if len(pivot)>50:
-        st.info(f"Heatmap limitée à 50 indicateurs (sur {len(pivot)})")
-        pivot = pivot.sort_values(pivot.columns[-1],ascending=False).head(50)
-    fig = px.imshow(pivot,aspect="auto",labels=dict(x="Année",y="Indicateur",color="Nombre"),color_continuous_scale="Reds")
-    st.plotly_chart(fig,width="stretch")
+    subset_heat = df.copy()
+    pivot = subset_heat.groupby(["annee","indicateur"])["nombre"].sum().reset_index().pivot(index="indicateur", columns="annee", values="nombre").fillna(0)
+    if not pivot.empty:
+        fig_heat = px.imshow(pivot, aspect="auto", labels=dict(x="Année", y="Indicateur", color="Nombre"), color_continuous_scale="Reds")
+        st.plotly_chart(fig_heat, use_container_width=True)
 
-# ---- Recherche
+# ---- Tab 6 Recherche
 with tab6:
     st.header("🔍 Recherche")
-    search = st.text_input("Chercher une commune:")
-    if search:
-        matches = communes_ref[communes_ref["Commune"].str.contains(search,case=False,na=False)]
+    search_term = st.text_input("Tapez le nom d'une commune:", placeholder="Ex: Paris ...")
+    if search_term:
+        matches = communes_ref[communes_ref["Commune"].str.contains(search_term, case=False, na=False)]
         if not matches.empty:
-            commune_sel = st.selectbox("Choisir",matches["Commune"].unique())
-            dfx=prepare_data(None,[commune_sel],None,True)
-            evol=dfx.groupby(["annee","indicateur"],as_index=False)["nombre"].sum()
-            fig=px.line(evol,x="annee",y="nombre",color="indicateur",title=f"Évolution {commune_sel}")
-            st.plotly_chart(fig,width="stretch")
+            selected_commune = st.selectbox("Choisir une commune:", matches["Commune"].unique())
+            dfx, _ = prepare_data(include_all_years=True)
+            commune_data = dfx[dfx["Commune"] == selected_commune]
+            evol_commune = commune_data.groupby(["annee","indicateur"])["nombre"].sum().reset_index()
+            fig_search = px.line(evol_commune, x="annee", y="nombre", color="indicateur", title=f"Évolution à {selected_commune}")
+            st.plotly_chart(fig_search, use_container_width=True)
 
-# ---- Comparaison
+# ---- Tab 7 Comparaison
 with tab7:
     st.header("⚖️ Comparaison")
-    communes_compare=st.multiselect("Choisir des communes",sorted(communes_ref["Commune"].dropna().unique()))
+    communes_compare = st.multiselect("Choisir des communes", sorted(communes_ref["Commune"].dropna().unique()))
     if communes_compare:
-        dfc=prepare_data(annee_choice,communes_compare,None,False)
+        dfc, _ = prepare_data(annee_choice, communes_compare, include_all_years=False)
         fig=px.bar(dfc,x="indicateur",y="nombre",color="Commune",barmode="group")
-        st.plotly_chart(fig,width="stretch")
+        st.plotly_chart(fig, use_container_width=True)
 
+# ---- Footer
 st.markdown("---")
-st.caption("📊 Dashboard CSF – Données data.gouv.fr")
+st.caption("📊 Dashboard par CSF | Données : data.gouv.fr")
