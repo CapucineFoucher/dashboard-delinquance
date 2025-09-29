@@ -11,21 +11,27 @@ st.set_page_config(
     layout="wide",
 )
 
-# ----------------------------------
-# Helpers
-# ----------------------------------
 def derive_dep(code: str) -> str:
     if not isinstance(code, str) or len(code) < 2:
         return None
-    # DOM/TOM -> first 3 (971..978, 984, 986..988 etc.)
-    if code.startswith("97") or code.startswith("98"):
+    if code.startswith("97") or code.startswith("98"):  # DOM/TOM
         return code[:3]
-    # Corsica 2A/2B
-    if code[:2] in ("2A", "2B"):
+    if code[:2] in ("2A", "2B"):                        # Corse
         return code[:2]
-    # Default -> first 2 digits
     return code[:2]
 
+df, _ = prepare_data(
+    annee_choice=annee_choice,
+    communes_choice=[commune_choice] if commune_choice else None,
+    dep_choice=dep_choice,
+    include_all_years=False
+)
+
+# Ensure DEP exists even if upstream code changed
+if "DEP" not in df.columns or df["DEP"].isna().all():
+    base_code_col = "CODGEO_2025" if "CODGEO_2025" in df.columns else ("CODGEO" if "CODGEO" in df.columns else None)
+    if base_code_col is not None:
+        df["DEP"] = df[base_code_col].map(derive_dep)
 # ----------------------------------
 # 1) Data loaders (cloud-friendly)
 # ----------------------------------
