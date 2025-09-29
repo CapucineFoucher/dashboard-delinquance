@@ -13,27 +13,17 @@ st.set_page_config(
 )
 
 # ----------------------------------
-# Global constants
+# Global constants & helpers
 # ----------------------------------
-MAX_ROWS = 200_000  # Limite anti-crash (200k lignes max pour un rendu)
+MAX_ROWS = 200_000  # Limite anti-crash
 
-# ----------------------------------
-# Helper: safe plotting
-# ----------------------------------
 def safe_chart(df, render_fn, *args, **kwargs):
-    """
-    Render a chart safely:
-    - If df too big, warn instead of crashing
-    - Otherwise, call plotting function
-    """
+    """Render a chart safely with row limit + error handling"""
     if df is None or df.empty:
         st.info("⚠️ Pas de données à afficher.")
         return
     if len(df) > MAX_ROWS:
-        st.warning(
-            f"🚨 Trop de données sélectionnées ({len(df):,} lignes). "
-            f"Veuillez affiner vos filtres en dessous de {MAX_ROWS:,} lignes."
-        )
+        st.warning(f"🚨 Trop de données ({len(df):,} lignes). Veuillez affiner vos filtres.")
         return
     try:
         fig = render_fn(df, *args, **kwargs)
@@ -54,11 +44,12 @@ def load_crime_data():
             file_to_use = f
             break
     if file_to_use is None:
-        raise FileNotFoundError(f"Aucun fichier trouvé parmi: {candidate_files}")
+        raise FileNotFoundError(f"Aucun fichier crime trouvé parmi: {candidate_files}")
 
     df = pd.read_csv(file_to_use, sep=";", compression="gzip", dtype={"CODGEO_2025": str})
-    df["annee"] = pd.to_numeric(df["annee"], errors="coerce")
+    df["annee"]  = pd.to_numeric(df["annee"], errors="coerce")
     df["nombre"] = pd.to_numeric(df["nombre"], errors="coerce")
+
     if "taux_pour_mille" not in df.columns:
         df["taux_pour_mille"] = pd.NA
     return df, file_to_use
@@ -66,7 +57,7 @@ def load_crime_data():
 @st.cache_data(show_spinner=False)
 def load_communes_ref():
     ref = pd.read_csv("v_commune_2025.csv", dtype=str)
-    return ref.rename(columns={"COM": "CODGEO_2025", "LIBELLE": "Commune"})[["CODGEO_2025","Commune"]]
+    return ref.rename(columns={"COM":"CODGEO_2025","LIBELLE":"Commune"})[["CODGEO_2025","Commune"]]
 
 @st.cache_data(show_spinner=False)
 def load_population_data():
@@ -74,21 +65,51 @@ def load_population_data():
     pop["codgeo"] = pop["codgeo"].str.zfill(5)
     return pop.rename(columns={"codgeo":"CODGEO"})[["CODGEO","annee","Population"]]
 
-# Pour simplifier : je garde ta fonction prepare_data() comme avant …
-# (on suppose qu’elle est déjà implémentée correctement)
-from your_previous_code import prepare_data
+# ----------------------------------
+# Data prep
+# ----------------------------------
+def derive_dep(code: str) -> str:
+    if not isinstance(code, str) or len(code) < 2:
+        return None
+    if code.startswith("97") or code.startswith("98"):
+        return code[:3]
+    if code[:2] in ("2A","2B"):
+        return code[:2]
+    return code[:2]
+
+@st.cache_data(show_spinner=False)
+def prepare_data(annee_choice=None, communes_choice=None, dep_choice=None, include_all_years=False):
+    crime, _ = load_crime_data()
+    ref = load_communes_ref()
+    pop = load_population_data()
+
+    crime = crime.merge(ref, on="CODGEO_2025", how="left")
+    crime["DEP"] = crime["CODGEO_2025"].map(derive_dep)
+
+    if not include_all_years and annee_choice is not None:
+        crime = crime[crime["annee"] == annee_choice]
+
+    if communes_choice:
+        crime = crime[crime["Commune"].isin(communes_choice)]
+    if dep_choice:
+        crime = crime[crime["DEP"] == dep_choice]
+
+    df = crime.merge(pop, left_on=["CODGEO_2025","annee"], right_on=["CODGEO","annee"], how="left")
+    df["taux_calcule_pour_mille"] = (df["nombre"] / df["Population"]) * 1000
+    df.loc[df["Population"].isna() | (df["Population"] <= 0), "taux_calcule_pour_mille"] = pd.NA
+    return df
 
 # ----------------------------------
-# UI - Sidebar
+# UI - Filtres
 # ----------------------------------
 st.title("🚨 Dashboard Criminalité France")
 crime_raw, _ = load_crime_data()
 communes_ref = load_communes_ref()
 
 st.sidebar.header("📂 Filtres")
-niveau = st.sidebar.radio("Niveau d'analyse", ["France", "Commune spécifique"])
-if niveau == "Commune spécifique":
-    commune_choice = st.sidebar.selectbox("Choisir une commune", sorted(communes_ref["Commune"].dropna().unique()))
+niveau = st.sidebar.radio("Niveau d'analyse", ["France","Commune spécifique"])
+if niveau=="Commune spécifique":
+    commune_choice = st.sidebar.selectbox("Commune", sorted(communes_ref["Commune"].dropna().unique()))
 else:
     commune_choice = "France"
 
@@ -99,35 +120,27 @@ indic_choice = st.sidebar.selectbox("Indicateur", all_indics)
 # ----------------------------------
 # Tabs
 # ----------------------------------
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-    "🗺️ Carte", "📊 Répartition", "🏆 Classements",
-    "📈 Évolutions", "🔥 Heatmap", "🔍 Recherche", "⚖️ Comparaison"
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "🗺️ Carte","📊 Répartition","🏆 Classements",
+    "📈 Evolutions","🔍 Recherche","⚖️ Comparaison"
 ])
 
 # ---- Carte
 with tab1:
-    st.header("🗺️ Carte interactive par département")
+    st.header("🗺️ Carte")
     df = prepare_data(annee_choice, None if commune_choice=="France" else [commune_choice])
     df_map = df.groupby(["DEP","indicateur"], dropna=False)["nombre"].sum().reset_index()
-    if indic_choice == "Tous les crimes confondus":
+    if indic_choice=="Tous les crimes confondus":
         df_map = df_map.groupby("DEP", as_index=False)["nombre"].sum()
-        title_map = f"Tous crimes {annee_choice}"
     else:
-        df_map = df_map[df_map["indicateur"] == indic_choice]
-        title_map = f"{indic_choice} {annee_choice}"
-
-    safe_chart(
-        df_map,
-        lambda d: px.choropleth(
-            d,
-            geojson="https://france-geojson.gregoiredavid.fr/repo/departements.geojson",
-            locations="DEP",
-            featureidkey="properties.code",
-            color="nombre",
-            color_continuous_scale="Reds",
-            title=title_map
-        )
-    )
+        df_map = df_map[df_map["indicateur"]==indic_choice]
+    safe_chart(df_map, lambda d: px.choropleth(
+        d,
+        geojson="https://france-geojson.gregoiredavid.fr/repo/departements.geojson",
+        locations="DEP", featureidkey="properties.code",
+        color="nombre", color_continuous_scale="Reds",
+        title=f"{indic_choice} {annee_choice}"
+    ))
 
 # ---- Répartition
 with tab2:
@@ -136,10 +149,9 @@ with tab2:
     if indic_choice=="Tous les crimes confondus":
         subset = df.groupby("indicateur", as_index=False)["nombre"].sum()
     else:
-        subset = df[df["indicateur"] == indic_choice]
-
-    if len(subset) > MAX_ROWS:
-        st.warning(f"Trop de lignes ({len(subset):,}), affichage limité à {MAX_ROWS:,}")
+        subset = df[df["indicateur"]==indic_choice]
+    if len(subset)>MAX_ROWS:
+        st.warning(f"⚠️ Table limitée à {MAX_ROWS:,} lignes (sur {len(subset):,})")
         subset = subset.head(MAX_ROWS)
     st.dataframe(subset, use_container_width=True)
 
@@ -147,60 +159,45 @@ with tab2:
 with tab3:
     st.header("🏆 Classements")
     df = prepare_data(annee_choice)
-    n = st.slider("Nombre de communes", 10, 100, 15)
+    n = st.slider("Nombre de communes",10,100,15)
     rank = df.groupby(["Commune","CODGEO_2025"], as_index=False).agg(
         Total_crimes=("nombre","sum"),
         Population=("Population","first")
     )
-    rank["Taux_pour_mille"] = (rank["Total_crimes"]/rank["Population"]) * 1000
-    top_nombre = rank.sort_values("Total_crimes", ascending=False).head(n)
-
-    if len(top_nombre) > MAX_ROWS:
-        st.warning("Table trop grosse, réduite")
-        top_nombre = top_nombre.head(MAX_ROWS)
-
+    rank["Taux_pour_mille"] = (rank["Total_crimes"]/rank["Population"])*1000
+    top_nombre = rank.sort_values("Total_crimes",ascending=False).head(n)
     st.dataframe(top_nombre, use_container_width=True)
 
 # ---- Evolutions
 with tab4:
     st.header("📈 Evolutions temporelles")
     df_all = prepare_data(None, None if commune_choice=="France" else [commune_choice], include_all_years=True)
-    subset_evol = (
-        df_all if indic_choice=="Tous les crimes confondus"
-        else df_all[df_all["indicateur"] == indic_choice]
-    )
-    safe_chart(
-        subset_evol,
-        lambda d: px.line(d, x="annee", y="nombre", color="indicateur", title="Evolution")
-    )
+    subset_evol = df_all if indic_choice=="Tous les crimes confondus" else df_all[df_all["indicateur"]==indic_choice]
+    safe_chart(subset_evol, lambda d: px.line(
+        d,
+        x="annee", y="nombre", color="indicateur",
+        title=f"Evolution: {indic_choice}"
+    ))
 
-# ---- Heatmap
+# ---- Recherche
 with tab5:
-    st.header("🔥 Heatmap")
-    df_h = prepare_data(None, None if commune_choice=="France" else [commune_choice], include_all_years=True)
-    pivot = df_h.groupby(["annee","indicateur"], as_index=False)["nombre"].sum().pivot(
-        index="indicateur", columns="annee", values="nombre"
-    )
-    if len(pivot) > 50:
-        st.info("Heatmap limitée aux 50 indicateurs les plus fréquents")
-        pivot = pivot.head(50)
-    safe_chart(
-        pivot.reset_index(),
-        lambda d: px.imshow(
-            d.set_index("indicateur"),
-            aspect="auto",
-            labels=dict(x="Année", y="Indicateur", color="Nombre"),
-            color_continuous_scale="Reds"
-        )
-    )
+    st.header("🔍 Recherche")
+    search = st.text_input("Commune à rechercher")
+    if search:
+        matches = communes_ref[communes_ref["Commune"].str.contains(search,case=False,na=False)]
+        if not matches.empty:
+            commune_sel = st.selectbox("Choisir",matches["Commune"].unique())
+            df_r = prepare_data(None,[commune_sel],include_all_years=True)
+            safe_chart(df_r, lambda d: px.line(d,x="annee",y="nombre",color="indicateur",title=f"Evolution {commune_sel}"))
 
 # ---- Comparaison
-with tab7:
+with tab6:
     st.header("⚖️ Comparaison")
-    communes_compare = st.multiselect("Choisir des communes", sorted(communes_ref["Commune"].unique()))
+    communes_compare=st.multiselect("Communes",sorted(communes_ref["Commune"].dropna().unique()))
     if communes_compare:
-        dfc = prepare_data(annee_choice, communes_compare)
-        safe_chart(
-            dfc,
-            lambda d: px.bar(d, x="indicateur", y="nombre", color="Commune", barmode="group")
-        )
+        dfc=prepare_data(annee_choice, communes_compare)
+        safe_chart(dfc, lambda d: px.bar(
+            d,x="indicateur",y="nombre",color="Commune",barmode="group"
+        ))
+
+st.caption("📊 Données: Ministère de l'Intérieur – Data.gouv.fr")
