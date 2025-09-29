@@ -1,0 +1,29 @@
+name: Update Crime Data (Data.gouv stable URL)
+
+on:
+  schedule:
+    - cron: "0 6 1 2 *"
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install pandas requests
+      - name: Run update script
+        run: python update_crime_data.py
+      - name: Commit and push changes
+        run: |
+          git config user.name "data-updater-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add crime_2016_latest.csv.gz
+          git commit -m "Auto-update crime_2016_latest.csv.gz" || echo "No changes"
+          git push
