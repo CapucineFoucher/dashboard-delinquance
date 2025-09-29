@@ -46,28 +46,17 @@ from io import BytesIO
 
 @st.cache_data
 def load_population_local():
-    """
-    Charge la population des communes :
-    - Si un CSV optimisé est déjà présent => le lire directement
-    - Sinon => télécharger la source brute (data.gouv), transformer, sauver en CSV
-    """
     cache_file = "population_long.csv"
-
     if os.path.exists(cache_file):
-        df_long = pd.read_csv(cache_file, dtype={"codgeo": str, "libgeo": str, "annee": int, "Population": float})
-        return df_long.rename(columns={"codgeo": "CODGEO"})
-
-    # --- 1) Télécharger brut depuis l’API (souvent Excel caché)
+        return pd.read_csv(cache_file, dtype={"codgeo": str}).rename(columns={"codgeo": "CODGEO"})
+    
     url_pop = "https://www.data.gouv.fr/api/1/datasets/r/630e7917-02db-4838-8856-09235719551c"
     r = requests.get(url_pop)
     r.raise_for_status()
-
-    try:
-        df_pop = pd.read_excel(BytesIO(r.content), dtype=str)
-    except Exception:
-        df_pop = pd.read_csv(BytesIO(r.content), sep=None, engine="python", dtype=str)
-
-    # --- 2) Transformer en format long
+    
+    # lire comme Excel brut
+    df_pop = pd.read_excel(BytesIO(r.content), dtype=str)
+    
     pop_cols = [c for c in df_pop.columns if c.startswith("p")]
     df_long = df_pop.melt(
         id_vars=["codgeo", "libgeo"],
@@ -75,22 +64,19 @@ def load_population_local():
         var_name="annee",
         value_name="Population"
     )
-
     df_long["annee"] = df_long["annee"].str.extract(r"p(\d+)_pop").astype(int)
     df_long["annee"] = 2000 + df_long["annee"]
     df_long["codgeo"] = df_long["codgeo"].str.zfill(5)
     df_long["Population"] = pd.to_numeric(df_long["Population"], errors="coerce")
-
-    # extrapoler jusqu'en 2024
-    max_year = df_long["annee"].max()
-    for year in range(max_year + 1, 2025):
-        extrap = df_long[df_long["annee"] == max_year].copy()
+    
+    # extrapolation
+    for year in range(df_long["annee"].max() + 1, 2025):
+        extrap = df_long[df_long["annee"] == df_long["annee"].max()].copy()
         extrap["annee"] = year
         df_long = pd.concat([df_long, extrap])
-
-    # --- 3) Sauvegarder la version optimisée
+    
+    # sauver en CSV optimisé
     df_long.to_csv(cache_file, index=False)
-
     return df_long.rename(columns={"codgeo": "CODGEO"})
 
 
