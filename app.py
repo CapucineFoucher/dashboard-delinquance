@@ -39,13 +39,9 @@ def load_communes_ref():
 
 @st.cache_data
 def load_population_local():
-    cols_to_use = ["codgeo", "libgeo"]
-    header_cols = pd.read_excel("POPULATION_MUNICIPALE_COMMUNES_FRANCE.xlsx", nrows=0).columns.tolist()
-    pop_cols = [c for c in header_cols if c.startswith("p")]
-    use_cols = cols_to_use + pop_cols
+    df_pop = pd.read_csv("population.csv", dtype=str)
 
-    df_pop = pd.read_excel("POPULATION_MUNICIPALE_COMMUNES_FRANCE.xlsx", usecols=use_cols, dtype=str)
-
+    pop_cols = [c for c in df_pop.columns if c.startswith("p")]
     df_long = df_pop.melt(
         id_vars=["codgeo", "libgeo"],
         value_vars=pop_cols,
