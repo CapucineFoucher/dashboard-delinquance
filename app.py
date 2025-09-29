@@ -38,33 +38,11 @@ def load_communes_ref():
     return communes_ref[["COM", "LIBELLE"]].rename(columns={"COM": "CODGEO_2025", "LIBELLE": "Commune"})
 
 
-
-import os
-import pandas as pd
-import requests
-from io import BytesIO
-
 @st.cache_data
 def load_population_local():
-    cache_file = "population_long.csv"
-    if os.path.exists(cache_file):
-        return pd.read_csv(cache_file, dtype={"codgeo":str}).rename(columns={"codgeo":"CODGEO"})
-
-    url = "https://www.data.gouv.fr/api/1/datasets/r/630e7917-02db-4838-8856-09235719551c"
-    r = requests.get(url)
-    df_pop = pd.read_excel(BytesIO(r.content), dtype=str)
-
-    pop_cols = [c for c in df_pop.columns if c.startswith("p")]
-    df_long = df_pop.melt(
-        id_vars=["codgeo","libgeo"],
-        value_vars=pop_cols,
-        var_name="annee",
-        value_name="Population"
-    )
-    df_long["annee"] = df_long["annee"].str.extract(r"p(\d+)_pop").astype(int) + 2000
-    df_long["Population"] = pd.to_numeric(df_long["Population"], errors="coerce")
-    df_long.to_csv(cache_file, index=False)
-    return df_long.rename(columns={"codgeo":"CODGEO"})
+    df_long = pd.read_csv("population_long.csv", dtype={"codgeo": str, "annee": int})
+    df_long["codgeo"] = df_long["codgeo"].str.zfill(5)
+    return df_long.rename(columns={"codgeo": "CODGEO"})
 
 
 # Exemple dans prepare_data :
