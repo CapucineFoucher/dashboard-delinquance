@@ -39,9 +39,13 @@ def load_communes_ref():
 
 @st.cache_data
 def load_population_local():
-    df_pop = pd.read_csv("population.csv", dtype=str)
+    url_pop = "https://www.data.gouv.fr/api/1/datasets/r/630e7917-02db-4838-8856-09235719551c"
+    df_pop = pd.read_csv(url_pop, dtype=str)
 
+    # Harmoniser les colonnes
+    # Typiquement : codgeo, libgeo, pXX_pop
     pop_cols = [c for c in df_pop.columns if c.startswith("p")]
+
     df_long = df_pop.melt(
         id_vars=["codgeo", "libgeo"],
         value_vars=pop_cols,
@@ -54,6 +58,7 @@ def load_population_local():
     df_long["codgeo"] = df_long["codgeo"].str.zfill(5)
     df_long["Population"] = pd.to_numeric(df_long["Population"], errors="coerce")
 
+    # extrapolation éventuelle 2022–2024
     max_year = df_long["annee"].max()
     for year in range(max_year + 1, 2025):
         extrap = df_long[df_long["annee"] == max_year].copy()
