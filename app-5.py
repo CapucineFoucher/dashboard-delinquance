@@ -20,11 +20,6 @@ def derive_dep(code: str) -> str:
         return code[:2]
     return code[:2]
 
-# Ensure DEP exists even if upstream code changed
-if "DEP" not in df.columns or df["DEP"].isna().all():
-    base_code_col = "CODGEO_2025" if "CODGEO_2025" in df.columns else ("CODGEO" if "CODGEO" in df.columns else None)
-    if base_code_col is not None:
-        df["DEP"] = df[base_code_col].map(derive_dep)
 # ----------------------------------
 # 1) Data loaders (cloud-friendly)
 # ----------------------------------
@@ -98,7 +93,6 @@ def prepare_data(annee_choice=None, communes_choice=None, dep_choice=None, inclu
 # ----------------------------------
 # 3) UI
 # ----------------------------------
-# UI
 st.title("🚨 Dashboard Criminalité France")
 
 with st.spinner("Chargement des données de base…"):
@@ -151,6 +145,7 @@ if "DEP" not in df.columns or df["DEP"].isna().all():
 if df.empty:
     st.warning("Aucune donnée disponible pour les filtres choisis.")
     st.stop()
+
 # Tabs
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "🗺️ Carte", "📊 Répartition", "🏆 Classements",
@@ -173,21 +168,18 @@ with tab1:
         title_map = f"{indic_choice} - {annee_choice}"
 
     if not df_map_use.empty and df_map_use["DEP"].notna().any():
-        fig_map = px.choropleth_mapbox(
+        fig_map = px.choropleth(
             df_map_use,
             geojson="https://france-geojson.gregoiredavid.fr/repo/departements.geojson",
             locations="DEP",
             featureidkey="properties.code",
             color="nombre",
             color_continuous_scale="Reds",
-            mapbox_style="carto-positron",
-            center={"lat": 46.6, "lon": 2.5},
-            zoom=4.5,
-            opacity=0.75,
             title=title_map,
         )
+        fig_map.update_geos(fitbounds="locations", visible=False)
         fig_map.update_layout(height=560, margin=dict(l=10, r=10, t=50, b=10))
-        st.plotly_chart(fig_map, use_container_width=True)
+        st.plotly_chart(fig_map, width="stretch")
     else:
         st.info("Pas de données cartographiables pour ces filtres.")
 
@@ -198,15 +190,15 @@ with tab2:
     st.header("📊 Répartition")
     if indic_choice == "Tous les crimes confondus":
         rep = df.groupby("indicateur", as_index=False)["nombre"].sum().sort_values("nombre", ascending=False)
-        st.dataframe(rep, use_container_width=True)
+        st.dataframe(rep, width="stretch")
         if not rep.empty:
             st.plotly_chart(
                 px.pie(rep.head(15), values="nombre", names="indicateur", hole=0.3, title="Top 15 catégories"),
-                use_container_width=True
+                width="stretch"
             )
     else:
         subset = df[df["indicateur"] == indic_choice]
-        st.dataframe(subset[["Commune", "nombre"]].groupby("Commune", as_index=False).sum().sort_values("nombre", ascending=False), use_container_width=True)
+        st.dataframe(subset[["Commune", "nombre"]].groupby("Commune", as_index=False).sum().sort_values("nombre", ascending=False), width="stretch")
 
 # ----------------------------------
 # Tab 3: Classements
@@ -232,19 +224,19 @@ with tab3:
     c1, c2 = st.columns(2)
     with c1:
         st.subheader(f"Top {n} par nombre - {indic_choice} ({annee_choice})")
-        st.dataframe(top_nombre.reset_index(drop=True), use_container_width=True)
+        st.dataframe(top_nombre.reset_index(drop=True), width="stretch")
         if not top_nombre.empty:
             st.plotly_chart(
                 px.bar(top_nombre, x="Commune", y="Total_crimes", color="Total_crimes", color_continuous_scale="Blues"),
-                use_container_width=True
+                width="stretch"
             )
     with c2:
         st.subheader(f"Top {n} par taux pour 1000 - {indic_choice} ({annee_choice})")
-        st.dataframe(top_taux.reset_index(drop=True), use_container_width=True)
+        st.dataframe(top_taux.reset_index(drop=True), width="stretch")
         if not top_taux.empty:
             st.plotly_chart(
                 px.bar(top_taux, x="Commune", y="Taux_pour_mille", color="Taux_pour_mille", color_continuous_scale="Reds"),
-                use_container_width=True
+                width="stretch"
             )
 
 # ----------------------------------
@@ -271,7 +263,7 @@ with tab4:
         title_e = f"Évolution: {indic_choice}"
 
     if not evol.empty:
-        st.plotly_chart(px.line(evol, x="annee", y="nombre", color="indicateur", markers=True, title=title_e), use_container_width=True)
+        st.plotly_chart(px.line(evol, x="annee", y="nombre", color="indicateur", markers=True, title=title_e), width="stretch")
     else:
         st.info("Pas de série temporelle disponible pour ces filtres.")
 
@@ -295,7 +287,7 @@ with tab5:
     if not pivot.empty:
         st.plotly_chart(
             px.imshow(pivot, aspect="auto", labels=dict(x="Année", y="Indicateur", color="Nombre"), color_continuous_scale="Reds"),
-            use_container_width=True
+            width="stretch"
         )
     else:
         st.info("Heatmap indisponible pour ces filtres.")
@@ -322,7 +314,7 @@ with tab6:
                     st.metric("Années disponibles", dfx["annee"].nunique())
                     st.metric("Types", dfx["indicateur"].nunique())
                     evo = dfx.groupby(["annee", "indicateur"], as_index=False)["nombre"].sum()
-                    st.plotly_chart(px.line(evo, x="annee", y="nombre", color="indicateur", markers=True, title=f"Évolution - {choice}"), use_container_width=True)
+                    st.plotly_chart(px.line(evo, x="annee", y="nombre", color="indicateur", markers=True, title=f"Évolution - {choice}"), width="stretch")
 
 # ----------------------------------
 # Tab 7: Comparaison
@@ -346,12 +338,12 @@ with tab7:
         if not dfc.empty:
             st.plotly_chart(
                 px.bar(dfc, x="indicateur", y="nombre", color="Commune", barmode="group", title=f"Comparaison - {annee_choice}"),
-                use_container_width=True
+                width="stretch"
             )
             top_indics = dfc.groupby("indicateur")["nombre"].sum().nlargest(8).index.tolist()
             radar = dfc[dfc["indicateur"].isin(top_indics)].pivot_table(index="indicateur", columns="Commune", values="nombre", fill_value=0).reset_index()
             radar_long = radar.melt(id_vars="indicateur", var_name="Commune", value_name="nombre")
-            st.plotly_chart(px.line_polar(radar_long, r="nombre", theta="indicateur", color="Commune", line_close=True, title="Radar Top 8"), use_container_width=True)
+            st.plotly_chart(px.line_polar(radar_long, r="nombre", theta="indicateur", color="Commune", line_close=True, title="Radar Top 8"), width="stretch")
     else:
         st.info("Ajoutez au moins une commune pour comparer.")
 
