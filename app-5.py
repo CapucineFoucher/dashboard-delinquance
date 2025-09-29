@@ -295,27 +295,79 @@ with tab5:
 # ----------------------------------
 # Tab 6: Recherche
 # ----------------------------------
+# ----------------------------------
+# Tab 6: Recherche (robuste par code commune)
+# ----------------------------------
 with tab6:
     st.header("🔍 Recherche par commune")
+
+    # Construire des options uniques "Nom (DEP)" -> code
+    communes_ref_search = communes_ref.copy()
+    communes_ref_search["DEP"] = communes_ref_search["CODGEO_2025"].map(derive_dep)
+    communes_ref_search["label"] = communes_ref_search.apply(
+        lambda r: f'{r["Commune"]} ({r["DEP"]})' if pd.notna(r["DEP"]) else r["Commune"],
+        axis=1
+    )
+
     q = st.text_input("Tapez le nom d'une commune:", placeholder="Ex: Paris, Lyon…")
+
     if q:
-        matches = communes_ref[communes_ref["Commune"].str.contains(q, case=False, na=False)]["Commune"].unique()
-        if len(matches) == 0:
+        # Recherche tolérante
+        mask = communes_ref_search["Commune"].str.contains(q, case=False, na=False)
+        options = communes_ref_search.loc[mask, ["label", "CODGEO_2025"]].drop_duplicates()
+
+        if options.empty:
             st.warning("Aucune commune trouvée.")
         else:
-            choice = st.selectbox("Choisir:", matches)
-            if choice:
+            choice_label = st.selectbox("Choisir:", options["label"].tolist())
+            if choice_label:
+                # Récupérer le/les code(s) correspondant(s) au label choisi
+                chosen_codes = options.loc[options["label"] == choice_label, "CODGEO_2025"].tolist()
+
                 with st.spinner("Chargement…"):
-                    dfx, _ = prepare_data(communes_choice=[choice], include_all_years=True)
+                    # On filtre par code INSEE (plus fiable que par nom)
+                    dfx, _ = prepare_data(
+                        communes_choice=None,     # ne pas filtrer par nom
+                        dep_choice=None,
+                        include_all_years=True
+                    )
+                    dfx = dfx[dfx["CODGEO_2025"].isin(chosen_codes)]
+
                 if dfx.empty:
                     st.info("Pas de données pour cette commune.")
                 else:
-                    st.metric("Total crimes", f"{dfx['nombre'].sum():,}")
-                    st.metric("Années disponibles", dfx["annee"].nunique())
-                    st.metric("Types", dfx["indicateur"].nunique())
-                    evo = dfx.groupby(["annee", "indicateur"], as_index=False)["nombre"].sum()
-                    st.plotly_chart(px.line(evo, x="annee", y="nombre", color="indicateur", markers=True, title=f"Évolution - {choice}"), width="stretch")
+                    # Petit résumé debug
+                    c1, c2, c3, c4 = st.columns(4)
+                    with c1:
+                        st.metric("Total crimes", f"{int(dfx['nombre'].sum()):,}")
+                    with c2:
+                        st.metric("Années", int(dfx['annee'].nunique()))
+                    with c3:
+                        st.metric("Types", int(dfx['indicateur'].nunique()))
+                    with c4:
+                        st.metric("Lignes", int(len(dfx)))
 
+                    # Évolution multi-indicateurs
+                    evo = (
+                        dfx.groupby(["annee", "indicateur"], as_index=False)["nombre"].sum()
+                        .sort_values(["indicateur", "annee"])
+                    )
+                    nom_affiche = choice_label
+                    st.plotly_chart(
+                        px.line(evo, x="annee", y="nombre", color="indicateur", markers=True,
+                                title=f"Évolution - {nom_affiche}"),
+                        width="stretch"
+                    )
+
+                    # Répartition dernière année disponible
+                    last_year = evo["annee"].max()
+                    rep = evo[evo["annee"] == last_year].sort_values("nombre", ascending=False)
+                    if not rep.empty:
+                        st.plotly_chart(
+                            px.bar(rep.head(20), x="indicateur", y="nombre", title=f"Top indicateurs - {last_year}",
+                                   color="nombre", color_continuous_scale="Reds"),
+                            width="stretch"
+                        )
 # ----------------------------------
 # Tab 7: Comparaison
 # ----------------------------------
