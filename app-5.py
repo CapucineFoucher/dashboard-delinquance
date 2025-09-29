@@ -318,34 +318,35 @@ with tab3:
 with tab4:
     st.header("📈 Évolutions temporelles")
 
+    # Préparer un DF "toutes années"
+    df_all, _ = prepare_data(
+        communes_choice=None if commune_choice == "France" else [commune_choice],
+        dep_choice=dep_choice,
+        include_all_years=True
+    )
+
     if commune_choice == "France":
         if indic_choice == "Tous les crimes confondus":
-            subset_evol = df.groupby(["annee", "indicateur"])["nombre"].sum().reset_index()
+            subset_evol = df_all.groupby(["annee", "indicateur"])["nombre"].sum().reset_index()
             title_evol = "Évolution des crimes en France"
         else:
             subset_evol = (
-                df[df["indicateur"] == indic_choice]
-                .groupby(["annee"])["nombre"]
-                .sum()
-                .reset_index()
+                df_all[df_all["indicateur"] == indic_choice]
+                .groupby(["annee"])["nombre"].sum().reset_index()
             )
             subset_evol["indicateur"] = indic_choice
             title_evol = f"Évolution: {indic_choice} en France"
     else:
         if indic_choice == "Tous les crimes confondus":
             subset_evol = (
-                df[df["Commune"] == commune_choice]
-                .groupby(["annee", "indicateur"])["nombre"]
-                .sum()
-                .reset_index()
+                df_all[df_all["Commune"] == commune_choice]
+                .groupby(["annee", "indicateur"])["nombre"].sum().reset_index()
             )
             title_evol = f"Évolution des crimes à {commune_choice}"
         else:
             subset_evol = (
-                df[(df["Commune"] == commune_choice) & (df["indicateur"] == indic_choice)]
-                .groupby(["annee"])["nombre"]
-                .sum()
-                .reset_index()
+                df_all[(df_all["Commune"] == commune_choice) & (df_all["indicateur"] == indic_choice)]
+                .groupby(["annee"])["nombre"].sum().reset_index()
             )
             subset_evol["indicateur"] = indic_choice
             title_evol = f"Évolution: {indic_choice} à {commune_choice}"
@@ -355,8 +356,11 @@ with tab4:
             fig_line = px.line(subset_evol, x="annee", y="nombre", color="indicateur", title=title_evol)
         else:
             fig_line = px.line(subset_evol, x="annee", y="nombre", title=title_evol, markers=True)
+
         fig_line.update_layout(height=600)
         st.plotly_chart(fig_line, use_container_width=True)
+    else:
+        st.warning("Pas de données pour tracer l’évolution.")
 
 # ----
 # ONGLET 5: HEATMAP
