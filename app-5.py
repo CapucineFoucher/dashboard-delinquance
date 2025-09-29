@@ -141,6 +141,17 @@ with tab1:
         color="nombre", color_continuous_scale="Reds",
         title=f"{indic_choice} {annee_choice}"
     ))
+    px.choropleth_mapbox(
+        df_map,
+        geojson=geojson,
+        locations="DEP",
+        featureidkey="properties.code",
+        color="nombre",
+        color_continuous_scale="Reds",
+        range_color=(0, df_map["nombre"].max()),
+        mapbox_style="carto-positron",
+        zoom=4.5, center={"lat": 46.6, "lon": 2.5}, opacity=0.7
+    )
 
 # ---- Répartition
 with tab2:
@@ -148,6 +159,7 @@ with tab2:
     df = prepare_data(annee_choice, None if commune_choice=="France" else [commune_choice])
     if indic_choice=="Tous les crimes confondus":
         subset = df.groupby("indicateur", as_index=False)["nombre"].sum()
+        safe_chart(subset, lambda d: px.pie(d, names="indicateur", values="nombre", title="Répartition"))
     else:
         subset = df[df["indicateur"]==indic_choice]
     if len(subset)>MAX_ROWS:
@@ -159,45 +171,89 @@ with tab2:
 with tab3:
     st.header("🏆 Classements")
     df = prepare_data(annee_choice)
-    n = st.slider("Nombre de communes",10,100,15)
-    rank = df.groupby(["Commune","CODGEO_2025"], as_index=False).agg(
-        Total_crimes=("nombre","sum"),
-        Population=("Population","first")
-    )
-    rank["Taux_pour_mille"] = (rank["Total_crimes"]/rank["Population"])*1000
-    top_nombre = rank.sort_values("Total_crimes",ascending=False).head(n)
-    st.dataframe(top_nombre, use_container_width=True)
 
+    n = st.slider("Nombre de communes", 10, 100, 15)
+
+    if indic_choice == "Tous les crimes confondus":
+        rank = df.groupby(["Commune","CODGEO_2025"], as_index=False).agg(
+            Total_crimes=("nombre","sum"),
+            Population=("Population","first")
+        )
+    else:
+        rank = df[df["indicateur"] == indic_choice].groupby(
+            ["Commune","CODGEO_2025"], as_index=False
+        ).agg(
+            Total_crimes=("nombre","sum"),
+            Population=("Population","first")
+        )
+
+    rank["Taux_pour_mille"] = (rank["Total_crimes"]/rank["Population"]) * 1000
+
+    top = rank.sort_values("Total_crimes", ascending=False).head(n)
+    st.dataframe(top, use_container_width=True)
 # ---- Evolutions
 with tab4:
     st.header("📈 Evolutions temporelles")
     df_all = prepare_data(None, None if commune_choice=="France" else [commune_choice], include_all_years=True)
-    subset_evol = df_all if indic_choice=="Tous les crimes confondus" else df_all[df_all["indicateur"]==indic_choice]
-    safe_chart(subset_evol, lambda d: px.line(
-        d,
-        x="annee", y="nombre", color="indicateur",
-        title=f"Evolution: {indic_choice}"
-    ))
+
+    if indic_choice == "Tous les crimes confondus":
+        # limiter top 10 indicateurs en volume
+        top_indics = df_all.groupby("indicateur")["nombre"].sum().nlargest(10).index
+        subset_evol = df_all[df_all["indicateur"].isin(top_indics)]
+        safe_chart(subset_evol, lambda d: px.line(
+            d, x="annee", y="nombre", color="indicateur",
+            title="Top 10 indicateurs – Evolution"
+        ))
+    else:
+        subset_evol = df_all[df_all["indicateur"] == indic_choice]
+        safe_chart(subset_evol, lambda d: px.line(
+            d, x="annee", y="nombre", title=f"Evolution: {indic_choice}"
+        ))
 
 # ---- Recherche
 with tab5:
     st.header("🔍 Recherche")
     search = st.text_input("Commune à rechercher")
     if search:
-        matches = communes_ref[communes_ref["Commune"].str.contains(search,case=False,na=False)]
+        matches = communes_ref[communes_ref["Commune"].str.contains(search, case=False, na=False)]
         if not matches.empty:
-            commune_sel = st.selectbox("Choisir",matches["Commune"].unique())
-            df_r = prepare_data(None,[commune_sel],include_all_years=True)
-            safe_chart(df_r, lambda d: px.line(d,x="annee",y="nombre",color="indicateur",title=f"Evolution {commune_sel}"))
+            commune_sel = st.selectbox("Choisir", matches["Commune"].unique())
+            df_r = prepare_data(None, [commune_sel], include_all_years=True)
 
+            # Evolution
+            safe_chart(df_r, lambda d: px.line(
+                d, x="annee", y="nombre", color="indicateur",
+                title=f"Evolution {commune_sel}"
+            ))
+
+            # Bar chart année sélectionnée
+            df_year = df_r[df_r["annee"] == annee_choice]
+            safe_chart(df_year, lambda d: px.bar(
+                d, x="indicateur", y="nombre", title=f"{commune_sel} – {annee_choice}"
+            ))
+
+            # Pie chart année sélectionnée
+            safe_chart(df_year, lambda d: px.pie(
+                d, names="indicateur", values="nombre", title=f"Répartition {commune_sel} – {annee_choice}"
+            ))
 # ---- Comparaison
 with tab6:
     st.header("⚖️ Comparaison")
-    communes_compare=st.multiselect("Communes",sorted(communes_ref["Commune"].dropna().unique()))
+    communes_compare = st.multiselect("Communes", sorted(communes_ref["Commune"].dropna().unique()))
+
     if communes_compare:
-        dfc=prepare_data(annee_choice, communes_compare)
+        dfc = prepare_data(annee_choice, communes_compare)
+
+        # Bar chart
         safe_chart(dfc, lambda d: px.bar(
-            d,x="indicateur",y="nombre",color="Commune",barmode="group"
+            d, x="indicateur", y="nombre", color="Commune", barmode="group",
+            title=f"Comparaison des communes – {annee_choice}"
+        ))
+
+        # Radar chart (toile)
+        safe_chart(dfc, lambda d: px.line_polar(
+            d, r="nombre", theta="indicateur", color="Commune", line_close=True,
+            title=f"Comparaison Radar – {annee_choice}"
         ))
 
 st.caption("📊 Données: Ministère de l'Intérieur – Data.gouv.fr")
