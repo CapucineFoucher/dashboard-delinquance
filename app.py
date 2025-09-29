@@ -46,32 +46,23 @@ def load_population_local():
     return df_long.rename(columns={"codgeo": "CODGEO"})
 
 
-# Exemple dans prepare_data :
-def prepare_data():
-    df, source_url = load_crime_data()
-    if df is None:
-        return None, None
-
+def prepare_data(annee_choice=None, subset_communes=None):
+    df_crime, source_url = load_crime_data()
     communes_ref = load_communes_ref()
+    df_crime = df_crime.merge(communes_ref, on="CODGEO_2025", how="left")
+
+    if annee_choice:
+        df_crime = df_crime[df_crime["annee"] == annee_choice]
+    if subset_communes:
+        df_crime = df_crime[df_crime["Commune"].isin(subset_communes)]
+
+    # merge population seulement sur ce sous-ensemble
     pop_long = load_population_local()
+    df_crime = df_crime.merge(pop_long, left_on=["CODGEO_2025", "annee"],
+                              right_on=["CODGEO", "annee"], how="left")
 
-    df = df.merge(communes_ref, on="CODGEO_2025", how="left")
-    df = df.merge(
-        pop_long,
-        left_on=["CODGEO_2025", "annee"],
-        right_on=["CODGEO", "annee"],
-        how="left"
-    )
-
-    df["DEP"] = df["CODGEO_2025"].str[:2]
-    mask_dom = df["CODGEO_2025"].str.startswith(("97", "98"))
-    df.loc[mask_dom, "DEP"] = df["CODGEO_2025"].str[:3]
-    df.loc[df["DEP"] == "20", "DEP"] = df["CODGEO_2025"].str[:3]
-
-    df["taux_calcule_pour_mille"] = (df["nombre"] / df["Population"]) * 1000
-
-    return df, source_url
-
+    df_crime["taux_calcule_pour_mille"] = (df_crime["nombre"] / df_crime["Population"]) * 1000
+    return df_crime, source_url
 
 # ----
 # 2. DONNÉES
