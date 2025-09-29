@@ -20,13 +20,6 @@ def derive_dep(code: str) -> str:
         return code[:2]
     return code[:2]
 
-df, _ = prepare_data(
-    annee_choice=annee_choice,
-    communes_choice=[commune_choice] if commune_choice else None,
-    dep_choice=dep_choice,
-    include_all_years=False
-)
-
 # Ensure DEP exists even if upstream code changed
 if "DEP" not in df.columns or df["DEP"].isna().all():
     base_code_col = "CODGEO_2025" if "CODGEO_2025" in df.columns else ("CODGEO" if "CODGEO" in df.columns else None)
@@ -105,6 +98,7 @@ def prepare_data(annee_choice=None, communes_choice=None, dep_choice=None, inclu
 # ----------------------------------
 # 3) UI
 # ----------------------------------
+# UI
 st.title("🚨 Dashboard Criminalité France")
 
 with st.spinner("Chargement des données de base…"):
@@ -114,7 +108,7 @@ with st.spinner("Chargement des données de base…"):
 
 st.markdown(f"Source des données : {source_url}")
 
-# Sidebar filters
+# Sidebar filters (CREATE VARIABLES FIRST)
 st.sidebar.header("📂 Filtres")
 niveau = st.sidebar.radio("Niveau d'analyse", ["France", "Commune spécifique"])
 
@@ -134,13 +128,12 @@ annee_choice = st.sidebar.selectbox(
 all_indics = ["Tous les crimes confondus"] + sorted(crime_raw["indicateur"].dropna().unique())
 indic_choice = st.sidebar.selectbox("Indicateur", all_indics)
 
-# Department list (derived from CODGEO_2025)
 deps_from_codes = pd.Series(crime_raw["CODGEO_2025"].dropna().unique()).map(derive_dep).dropna().unique()
 deps_available = sorted(deps_from_codes.tolist())
 dep_choice = st.sidebar.selectbox("Département (optionnel)", ["Tous"] + deps_available)
 dep_choice = None if dep_choice == "Tous" else dep_choice
 
-# Pre-filtered data for selected year (fast)
+# NOW USE THE VARIABLES ✅
 with st.spinner("Préparation des données filtrées…"):
     df, _ = prepare_data(
         annee_choice=annee_choice,
@@ -149,10 +142,15 @@ with st.spinner("Préparation des données filtrées…"):
         include_all_years=False
     )
 
+# Ensure DEP exists even if upstream code changed
+if "DEP" not in df.columns or df["DEP"].isna().all():
+    base_code_col = "CODGEO_2025" if "CODGEO_2025" in df.columns else ("CODGEO" if "CODGEO" in df.columns else None)
+    if base_code_col is not None:
+        df["DEP"] = df[base_code_col].map(derive_dep)
+
 if df.empty:
     st.warning("Aucune donnée disponible pour les filtres choisis.")
     st.stop()
-
 # Tabs
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "🗺️ Carte", "📊 Répartition", "🏆 Classements",
