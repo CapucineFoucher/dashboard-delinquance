@@ -17,57 +17,59 @@ def http_get_with_retry(url, max_retries=4, timeout=60):
             return resp
         except Exception as e:
             last_err = e
-            time.sleep(2*(i+1))
+            time.sleep(2 * (i + 1))
     raise last_err
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    # Harmoniser les colonnes
     cols_map = {c.lower(): c for c in df.columns}
+
     def col(*names):
         for n in names:
-            if n in df.columns: return n
-            if n.lower() in cols_map: return cols_map[n.lower()]
+            if n in df.columns:
+                return n
+            if n.lower() in cols_map:
+                return cols_map[n.lower()]
         return None
 
-    c_cod = col("CODGEO","codgeo")
-    c_an  = col("ANNEE","annee")
-    c_ind = col("INDICATEUR","indicateur")
-    c_nb  = col("NB","nb","nombre")
+    c_cod = col("CODGEO_2025", "CODGEO", "codgeo")
+    c_an  = col("annee", "ANNEE")
+    c_ind = col("indicateur", "INDICATEUR")
+    c_nb  = col("nombre", "NB", "nb")
 
-    if not all([c_cod,c_an,c_ind,c_nb]):
+    if not all([c_cod, c_an, c_ind, c_nb]):
         raise ValueError(f"Colonnes non trouvées. Colonnes dispo: {list(df.columns)}")
 
     df = df.rename(columns={
-        c_cod:"CODGEO_2025",
-        c_an:"annee",
-        c_ind:"indicateur",
-        c_nb:"nombre"
+        c_cod: "CODGEO_2025",
+        c_an: "annee",
+        c_ind: "indicateur",
+        c_nb: "nombre"
     })
-    return df[["CODGEO_2025","annee","indicateur","nombre"]]
+    return df[["CODGEO_2025", "annee", "indicateur", "nombre"]]
 
 def main():
     print(f"Téléchargement depuis l’URL stable:\n{STABLE_URL}")
     resp = http_get_with_retry(STABLE_URL)
     content = resp.content
 
-    # 🚨 Ici on précise bien que c’est GZIP 🚨
+    # Lecture gzip CSV
     df = pd.read_csv(io.BytesIO(content), compression="gzip", sep=";", dtype=str, low_memory=False)
-
     print(f"Colonnes importées: {list(df.columns)}")
-    df = normalize_columns(df)
 
+    df = normalize_columns(df)
     df["annee"] = pd.to_numeric(df["annee"], errors="coerce")
     df["nombre"] = pd.to_numeric(df["nombre"], errors="coerce")
     df["CODGEO_2025"] = df["CODGEO_2025"].astype(str).str.strip()
 
-    df = df.dropna(subset=["annee","nombre"])
-    print(f"Années couvertes: {df['annee'].min()} → {df['annee'].max()}")
+    df = df.dropna(subset=["annee", "nombre"])
+    print(f"Années couvertes: {int(df['annee'].min())} → {int(df['annee'].max())}")
     print(f"Lignes totales: {len(df):,}")
 
-    # On écrase le fichier latest
     df.to_csv(OUTPUT_LATEST, sep=";", index=False, compression="gzip")
     print(f"✅ Écrit: {OUTPUT_LATEST}")
 
-if __name__=="__main__":
+if __name__ == "__main__":
     try:
         main()
     except Exception as e:
